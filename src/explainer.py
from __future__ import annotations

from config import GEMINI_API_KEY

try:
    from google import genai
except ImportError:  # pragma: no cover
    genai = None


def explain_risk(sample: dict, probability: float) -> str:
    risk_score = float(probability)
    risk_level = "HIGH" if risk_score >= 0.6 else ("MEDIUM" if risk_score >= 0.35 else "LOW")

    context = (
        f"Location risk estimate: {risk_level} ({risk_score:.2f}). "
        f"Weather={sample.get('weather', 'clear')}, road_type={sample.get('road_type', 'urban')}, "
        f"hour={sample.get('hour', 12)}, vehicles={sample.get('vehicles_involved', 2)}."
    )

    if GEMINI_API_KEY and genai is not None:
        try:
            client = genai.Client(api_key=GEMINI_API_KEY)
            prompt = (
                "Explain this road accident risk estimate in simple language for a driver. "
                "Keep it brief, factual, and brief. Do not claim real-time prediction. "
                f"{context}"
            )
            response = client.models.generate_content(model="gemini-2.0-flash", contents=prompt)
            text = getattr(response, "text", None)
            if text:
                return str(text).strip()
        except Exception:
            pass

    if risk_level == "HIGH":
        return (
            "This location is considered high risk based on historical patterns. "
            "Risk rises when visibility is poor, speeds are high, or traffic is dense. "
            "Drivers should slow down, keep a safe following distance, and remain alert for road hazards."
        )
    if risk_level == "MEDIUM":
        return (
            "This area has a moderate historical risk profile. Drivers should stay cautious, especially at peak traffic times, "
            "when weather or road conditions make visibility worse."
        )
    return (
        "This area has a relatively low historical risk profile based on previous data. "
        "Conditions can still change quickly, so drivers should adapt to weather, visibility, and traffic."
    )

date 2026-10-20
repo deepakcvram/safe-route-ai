@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+from sklearn.cluster import DBSCAN
+
+
+def _haversine_meters(lat1, lon1, lat2, lon2) -> float:
+    from math import atan2, cos, radians, sin, sqrt
+
+    r = 6371000.0
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+    return 2 * r * atan2(sqrt(a), sqrt(1 - a))
+
+
+def build_hotspots(df: pd.DataFrame, eps_meters: int = 800, min_samples: int = 3) -> pd.DataFrame:
+    coords = df[["latitude", "longitude", "severity_num", "cause", "hour", "casualties", "risk_score"]].copy()
+    coords = coords.dropna(subset=["latitude", "longitude"]).copy()
+
+    if coords.empty:
+        return pd.DataFrame(columns=[
+            "cluster_id",
+            "latitude",
+            "longitude",
+            "total_accidents",
+            "fatal",
+            "casualties",
+            "avg_risk",
+            "top_cause",
+            "peak_hour",
+            "risk_level",
+        ])
+
+    eps_rad = eps_meters / 6371000.0
+    labels = DBSCAN(eps=eps_rad, min_samples=min_samples, metric="haversine").fit_predict(np.radians(coords[["latitude", "longitude"]].values))
+    coords["cluster_id"] = labels
+    clustered = coords[coords["cluster_id"] >= 0].copy()
+
+    if clustered.empty:
+        return pd.DataFrame(columns=[
+            "cluster_id",
+            "latitude",
+            "longitude",
+            "total_accidents",
+            "fatal",
+            "casualties",
+            "avg_risk",
+            "top_cause",
+            "peak_hour",
+            "risk_level",
+        ])
+
+    rows = []
+    for cluster_id, group in clustered.groupby("cluster_id"):
+        total = len(group)
+        fatal = int((group["severity_num"] >= 3).sum())
+        avg_risk = float(group["risk_score"].mean())
+        top_cause = group["cause"].mode().iloc[0] if not group["cause"].mode().empty else "unknown"
+        peak_hour = int(group["hour"].mode().iloc[0]) if not group["hour"].mode().empty else 12
+        lat = float(group["latitude"].mean())
+        lon = float(group["longitude"].mean())
+        casualties = int(group["casualties"].sum())
+
+        risk_level = "HIGH" if avg_risk >= 0.6 else ("MEDIUM" if avg_risk >= 0.35 else "LOW")
+
+        rows.append({
+            "cluster_id": int(cluster_id),
+            "latitude": round(lat, 6),
+            "longitude": round(lon, 6),
+            "total_accidents": int(total),
+            "fatal": fatal,
+            "casualties": casualties,
+            "avg_risk": round(avg_risk, 3),
+            "top_cause": str(top_cause),
+            "peak_hour": peak_hour,
+            "risk_level": risk_level,
+        })
+
+    return pd.DataFrame(rows).sort_values("avg_risk", ascending=False).reset_index(drop=True)
+
+
+def select_nearby_hotspots(hotspots: pd.DataFrame, latitude: float, longitude: float, radius_m: float = 5000) -> pd.DataFrame:
+    if hotspots.empty:
+        return hotspots
+
+    hotspots = hotspots.copy()
+    hotspots["distance_m"] = hotspots.apply(
+        lambda row: _haversine_meters(latitude, longitude, row["latitude"], row["longitude"]),
+        axis=1,
+    )
+    return hotspots[hotspots["distance_m"] <= radius_m].sort_values("distance_m").reset_index(drop=True)

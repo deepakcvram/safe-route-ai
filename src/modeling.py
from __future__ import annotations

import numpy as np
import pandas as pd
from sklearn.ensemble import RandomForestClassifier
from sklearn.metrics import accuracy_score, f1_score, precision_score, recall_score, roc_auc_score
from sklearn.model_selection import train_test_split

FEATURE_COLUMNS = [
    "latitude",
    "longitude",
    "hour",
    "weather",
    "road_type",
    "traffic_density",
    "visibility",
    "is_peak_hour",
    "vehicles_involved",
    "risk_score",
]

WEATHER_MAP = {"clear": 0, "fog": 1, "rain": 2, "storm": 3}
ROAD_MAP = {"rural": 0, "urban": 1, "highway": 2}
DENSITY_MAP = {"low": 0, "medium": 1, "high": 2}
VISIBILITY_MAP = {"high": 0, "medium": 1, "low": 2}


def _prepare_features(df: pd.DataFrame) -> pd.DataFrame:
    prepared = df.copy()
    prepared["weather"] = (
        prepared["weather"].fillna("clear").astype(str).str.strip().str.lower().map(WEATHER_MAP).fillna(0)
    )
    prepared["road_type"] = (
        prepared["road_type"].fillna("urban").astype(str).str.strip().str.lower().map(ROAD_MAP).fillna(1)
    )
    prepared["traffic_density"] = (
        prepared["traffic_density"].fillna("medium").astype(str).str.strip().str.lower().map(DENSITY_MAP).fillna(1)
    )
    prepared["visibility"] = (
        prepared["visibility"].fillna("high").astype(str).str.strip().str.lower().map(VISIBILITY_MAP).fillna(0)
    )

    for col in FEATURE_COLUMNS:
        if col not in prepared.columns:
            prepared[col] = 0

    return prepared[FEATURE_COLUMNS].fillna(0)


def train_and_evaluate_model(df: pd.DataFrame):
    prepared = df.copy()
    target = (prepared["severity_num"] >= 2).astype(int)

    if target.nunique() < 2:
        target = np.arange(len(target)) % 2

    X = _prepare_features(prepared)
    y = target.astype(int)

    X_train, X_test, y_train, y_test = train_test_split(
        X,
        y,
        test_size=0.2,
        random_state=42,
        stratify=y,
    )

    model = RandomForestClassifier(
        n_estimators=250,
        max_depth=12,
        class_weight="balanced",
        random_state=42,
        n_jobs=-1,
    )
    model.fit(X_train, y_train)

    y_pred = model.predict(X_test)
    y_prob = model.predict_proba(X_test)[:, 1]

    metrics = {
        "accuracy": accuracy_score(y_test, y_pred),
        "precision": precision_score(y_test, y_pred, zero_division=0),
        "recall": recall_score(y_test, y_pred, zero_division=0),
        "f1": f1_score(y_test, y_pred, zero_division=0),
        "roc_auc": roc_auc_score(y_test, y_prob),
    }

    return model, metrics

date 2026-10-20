@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+import requests
+
+from config import DATA_PATH, ORIGINAL_DATASET_URL
+
+
+def ensure_dataset() -> Path:
+    DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if DATA_PATH.exists():
+        return DATA_PATH
+
+    response = requests.get(ORIGINAL_DATASET_URL, timeout=45)
+    response.raise_for_status()
+    DATA_PATH.write_text(response.text, encoding="utf-8")
+    return DATA_PATH
+
+
+def load_dataset() -> pd.DataFrame:
+    path = ensure_dataset()
+    df = pd.read_csv(path)
+
+    required_cols = {
+        "latitude",
+        "longitude",
+        "hour",
+        "weather",
+        "road_type",
+        "traffic_density",
+        "visibility",
+        "is_peak_hour",
+        "vehicles_involved",
+        "risk_score",
+    }
+
+    missing = sorted(required_cols - set(df.columns))
+    if missing:
+        raise ValueError(f"Dataset is missing required columns: {missing}")
+
+    if "severity_raw" not in df.columns:
+        df["severity_raw"] = df.get("severity", df.get("accident_severity", "minor"))
+
+    severity_map = {
+        "fatal": 3,
+        "major": 2,
+        "minor": 1,
+        "Fatal": 3,
+        "Major": 2,
+        "Minor": 1,
+    }
+
+    df["severity_num"] = (
+        df["severity_raw"].astype(str).str.strip().str.lower().map(severity_map).fillna(1)
+    )
+    df["risk_score"] = pd.to_numeric(df["risk_score"], errors="coerce").fillna(df["severity_num"] / 3.0)
+    return df

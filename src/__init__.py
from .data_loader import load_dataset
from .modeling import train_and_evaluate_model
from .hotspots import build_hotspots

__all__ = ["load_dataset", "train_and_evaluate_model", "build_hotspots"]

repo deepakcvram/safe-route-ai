@@ -1,39 +1,36 @@
 import streamlit as st
-import folium
-from streamlit_folium import st_folium
 
 from config import APP_TITLE, APP_SUBTITLE
 from src.data_loader import load_dataset
 from src.modeling import train_and_evaluate_model
-from src.hotspots import build_hotspots
+from src.hotspots import build_hotspots, select_nearby_hotspots
 from src.explainer import explain_risk
 
-st.set_page_config(
-    page_title=APP_TITLE,
-    page_icon="🛡️",
-    layout="wide",
-)
+st.set_page_config(page_title=APP_TITLE, page_icon="🛡️", layout="wide")
 
 st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
 
 
 @st.cache_resource(show_spinner=False)
-def load_project_data():
+def load_project():
     df = load_dataset()
     model, metrics = train_and_evaluate_model(df)
     hotspots = build_hotspots(df)
     return df, model, metrics, hotspots
 
 
-with st.spinner("Loading dataset and training the model..."):
-    df, model, metrics, hotspots = load_project_data()
+with st.spinner("Loading data and training the model..."):
+    df, model, metrics, hotspots = load_project()
 
-st.markdown("""
-This project keeps the original concept — historical accident hotspot prediction — but makes the pipeline more transparent,
-reproducible, and honest about limitations. The model is still traditional machine learning, while the LLM feature is a
-small explanation layer only.
-""")
+st.subheader("Project goal")
+st.markdown(
+    """
+    This project keeps the original idea of road accident hotspot prediction, but makes it more transparent and honest.
+    The traditional ML model is the primary engine for risk estimation. The explanation feature is intentionally small and
+    secondary; it helps a driver understand the output in plain language without replacing the model.
+    """
+)
 
 st.subheader("Model evaluation")
 col1, col2, col3, col4, col5 = st.columns(5)
@@ -44,30 +41,36 @@ col4.metric("F1", f"{metrics['f1']:.3f}")
 col5.metric("ROC AUC", f"{metrics['roc_auc']:.3f}")
 
 st.caption(
-    "The target is a binary high-risk label: major or fatal accidents are treated as the risky class. "
-    "This is a historical risk model, not a real-time accident warning system."
+    "These metrics are reported for a historical classification task. This is not a live real-time accident warning system."
 )
 
-st.subheader("Hotspot map")
-map_center = [df["latitude"].mean(), df["longitude"].mean()]
-map_obj = folium.Map(location=map_center, zoom_start=5, tiles="CartoDB positron")
+st.subheader("High-risk hotspot map")
+map_df = hotspots.head(60)
+if map_df.empty:
+    st.warning("No hotspot clusters were found for the current dataset.")
+else:
+    import folium
+    from streamlit_folium import st_folium
 
-for _, row in hotspots.head(60).iterrows():
-    color = "red" if row["risk_level"] == "HIGH" else "orange" if row["risk_level"] == "MEDIUM" else "green"
-    folium.CircleMarker(
-        location=[row["latitude"], row["longitude"]],
-        radius=8,
-        color=color,
-        fill=True,
-        fill_color=color,
-        fill_opacity=0.9,
-        popup=f"{row['risk_level']} risk — {row['total_accidents']} accidents",
-    ).add_to(map_obj)
+    center = [df["latitude"].mean(), df["longitude"].mean()]
+    mp = folium.Map(location=center, zoom_start=5, tiles="CartoDB positron")
 
-st_folium(map_obj, width=1200, height=500)
+    for _, row in map_df.iterrows():
+        color = "red" if row["risk_level"] == "HIGH" else "orange"
+        folium.CircleMarker(
+            location=[row["latitude"], row["longitude"]],
+            radius=8,
+            color=color,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.85,
+            popup=f"{row['risk_level']} risk — {row['total_accidents']} accidents",
+        ).add_to(mp)
 
-st.subheader("High-risk hotspot summary")
-summary_cols = [
+    st_folium(mp, width=1200, height=500)
+
+st.subheader("Top hotspot summary")
+summary = hotspots[[
     "cluster_id",
     "total_accidents",
     "fatal",
@@ -76,9 +79,9 @@ summary_cols = [
     "top_cause",
     "risk_level",
     "avg_risk",
-]
+]].sort_values("avg_risk", ascending=False).head(10)
 
-st.dataframe(hotspots[summary_cols].sort_values("avg_risk", ascending=False).head(10), use_container_width=True)
+st.dataframe(summary, use_container_width=True)
 
 st.subheader("Risk explanation")
 with st.form("risk_form"):
@@ -88,7 +91,7 @@ with st.form("risk_form"):
     road_type = st.selectbox("Road type", ["urban", "highway", "rural"])
     hour = st.slider("Hour of day", 0, 23, 18)
     vehicles = st.slider("Vehicles involved", 1, 8, 2)
-    risk_score = st.slider("Risk score proxy", 0.0, 1.0, 0.5, step=0.05)
+    risk_proxy = st.slider("Risk score proxy", 0.0, 1.0, 0.5, step=0.05)
     submitted = st.form_submit_button("Explain risk")
 
 if submitted:
@@ -102,10 +105,11 @@ if submitted:
         "visibility": "low" if weather in {"fog", "rain"} else "high",
         "is_peak_hour": 1 if hour in range(7, 10) or hour in range(17, 20) else 0,
         "vehicles_involved": vehicles,
-        "risk_score": float(risk_score),
+        "risk_score": float(risk_proxy),
         "casualties": 1,
     }
-    prob = model.predict_proba([[
+
+    feature_vector = [[
         sample["latitude"],
         sample["longitude"],
         sample["hour"],
@@ -116,17 +120,23 @@ if submitted:
         sample["is_peak_hour"],
         sample["vehicles_involved"],
         sample["risk_score"],
-    ]])[0][1]
-    explanation = explain_risk(sample, prob)
-    st.info(explanation)
+    ]]
+    prob = model.predict_proba(feature_vector)[0][1]
+    st.info(explain_risk(sample, prob))
 
-st.subheader("Implementation notes")
+st.subheader("Limitations")
 st.markdown(
     """
-    - The project uses a traditional machine learning model as the primary decision engine.
-    - The map is a historical hotspot visualization, not a live accident warning system.
-    - The LLM explanation is intentionally simple and optional.
-    - The dataset is sourced from the original project's historical accident dataset and downloaded automatically when not present.
-    - Model limitations are documented in the README.
+    - The model is trained on historical accident data, so it does not claim real-time prediction.
+    - Reporting bias may distort the observed hotspot distribution.
+    - The dataset may not represent all roads or all conditions equally.
+    - The map view is a visualization aid, not live traffic intelligence.
+    - The LLM explanation is a simple helper and does not replace the machine learning model.
     """
 )
+
+st.caption("Original project credit: madhan112007/road-accident-hotspot-prediction")
+
+
+if __name__ == "__main__":
+    st.run()

@@ -1,0 +1,56 @@
+# safe-route-ai
+
+Improved road accident hotspot prediction app built with Python, traditional ML, map visualization, and transparent evaluation.
+
+This project keeps the original idea of the Road Accident Hotspot Prediction project but makes the implementation more realistic and safer to reuse.
+
+Important note
+- The original project is by madhan112007.
+- The upstream repository does not currently show a visible OSS license in the repository metadata.
+- The improved version here preserves attribution and keeps the model and explanations clearly separated.
+
+What this project does
+- Trains a traditional machine learning model to identify high-risk accident locations based on historical patterns.
+- Clusters accident locations into hotspot groups using geospatial clustering.
+- Shows hotspots on a map.
+- Uses a small LLM explanation layer only to explain the model result in simple language.
+- Reports proper evaluation metrics (accuracy, precision, recall, F1, ROC-AUC) and includes a limitations section.
+- Does not claim real-time accident prediction unless the feature is implemented and validated.
+
+Project structure
+- app.py — main Streamlit application
+- config.py — project configuration and dataset settings
+- src/
+  - data_loader.py — downloads and prepares the accident dataset
+  - modeling.py — train/evaluate the Random Forest model
+  - hotspots.py — cluster accident points into hotspot groups
+  - explainer.py — simple LLM explanation layer with rule-based fallback
+- requirements.txt — project dependencies
+
+Dataset source
+- The app downloads the original project dataset from the upstream repository when it is not already present.
+- This is used for historical risk modeling and hotspot analysis only.
+
+Installation
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+Environment variables
+- `GEMINI_API_KEY` — optional, for the small LLM explanation feature
+- `OPENWEATHER_KEY` — optional future enhancement
+
+Limitations
+- This is a historical-risk model, not live accident detection.
+- Data may reflect reporting bias and incomplete coverage.
+- The app is intended for educational and research-oriented exploration.
+- Spatial clustering and model predictions should be treated as decision support, not safety-critical automation.
+
+Original project credit
+- Original repository: https://github.com/madhan112007/road-accident-hotspot-prediction
+
+This project is a cleaned and clarified derivative built for personal and educational use, with credit preserved to the original author.
